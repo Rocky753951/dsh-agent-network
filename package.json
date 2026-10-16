@@ -1,0 +1,33 @@
+{
+  "name": "@local/dsh-agent-network-host",
+  "version": "0.1.1",
+  "description": "DAN/0.1 agent-network Host bundle with explicit Web client bridge",
+  "type": "module",
+  "private": false,
+  "license": "MIT",
+  "main": "./host/index.js",
+  "exports": {
+    ".": "./host/index.js",
+    "./network.js": "./host/network.js",
+    "./client": "./client/client.js"
+  },
+  "files": [
+    "host",
+    "client",
+    "README.md",
+    "PROTOCOL.md"
+  ],
+  "scripts": {
+    "test": "npm --prefix host test && npm --prefix client test"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./host/cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  }
+}

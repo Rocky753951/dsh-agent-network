@@ -7,6 +7,17 @@
 - `PROTOCOL.md`：DAN/0.1 跨节点协议草案、安全模型与演进路线。
 - `host/`：Host bundle；提供 loopback HTTP/SSE bridge，以及 Agent 可调用的 register/send/receive/health 工具。
 - `client/`：Web client bundle；提供 Agent 列表、在线状态、消息/任务操作面板。
+- 根目录 `package.json`：DSH 组合包声明；请从仓库根目录安装，不要从 `host/` 或 `client/` 子目录安装。
+
+## 安装
+
+从仓库根目录执行：
+
+```sh
+dsh plugin --profile web add .
+```
+
+该包声明了 `dsh.bundle.patch`，并由 `host/cordis.patch.yml` 注册 Host。安装后重启对应 DSH profile；插件默认只绑定 loopback。若从 ZIP 下载，请解压后进入包含根目录 `package.json` 的目录再安装。
 
 ## 快速验证
 

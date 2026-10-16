@@ -1,0 +1,12 @@
+# Local test/runtime artifacts
+host/.replay-*.json
+host/*.tmp
+
+# Verification reports and local notes
+acceptance/
+*.log
+.env
+.env.*
+
+# Development-only dependency trees
+node_modules/
