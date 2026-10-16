@@ -1,8 +1,9 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { PairingState } from "./pairing.js";
 
 export const DAN_PROTOCOL = "dan/0.1";
-const METHODS = new Set(["ping", "describe", "message.send", "task.submit", "task.accept", "task.result", "task.cancel"]);
+const METHODS = new Set(["ping", "describe", "message.send", "task.submit", "task.accept", "task.result", "task.cancel", "pair.invite.create", "pair.join.request", "pair.approve", "pair.reject", "pair.session.open", "pair.status", "pair.revoke"]);
 const ID = /^[A-Za-z0-9._:-]{1,200}$/;
 
 export function canonical(value) {
@@ -59,7 +60,7 @@ export function validateEnvelope(envelope, { now = Date.now(), maxMessageBytes =
 }
 
 export class DanContractAdapter {
-  constructor({ nodeId = "host", instanceId = "host", hmac = {}, maxMessageBytes = 262144, describe = {}, replayFile } = {}) {
+  constructor({ nodeId = "host", instanceId = "host", hmac = {}, maxMessageBytes = 262144, describe = {}, replayFile, pairingNow = () => Date.now() } = {}) {
     this.nodeId = nodeId;
     this.instanceId = instanceId;
     this.keys = new Map(Object.entries(hmac.keys || {}));
@@ -74,9 +75,10 @@ export class DanContractAdapter {
     this.nonces = new Map();
     this.tasks = new Map();
     this.idempotency = new Map();
+    this.pairings = new PairingState({ now: pairingNow, persist: () => this.#persistReplay() });
     this.replayFile = replayFile;
     if (this.replayFile && existsSync(this.replayFile)) {
-      try { chmodSync(this.replayFile, 0o600); const saved = JSON.parse(readFileSync(this.replayFile, "utf8")); for (const [id, entry] of (saved.seen || []).slice(-this.maxSeen)) this.seen.set(id, entry); for (const [nonce, expires] of (saved.nonces || []).slice(-this.maxNonces)) this.nonces.set(nonce, expires); for (const [key, entry] of (saved.idempotency || []).slice(-this.maxSeen)) this.idempotency.set(key, entry); } catch { /* corrupt replay state is ignored, never secrets */ }
+      try { chmodSync(this.replayFile, 0o600); const saved = JSON.parse(readFileSync(this.replayFile, "utf8")); for (const [id, entry] of (saved.seen || []).slice(-this.maxSeen)) this.seen.set(id, entry); for (const [nonce, expires] of (saved.nonces || []).slice(-this.maxNonces)) this.nonces.set(nonce, expires); for (const [key, entry] of (saved.idempotency || []).slice(-this.maxSeen)) this.idempotency.set(key, entry); this.pairings.restore(saved.pairings); } catch { throw new Error("replay_state_invalid"); }
     }
   }
 
@@ -88,8 +90,9 @@ export class DanContractAdapter {
         return [id, { expires: entry.expires, ...(response ? { response } : {}) }];
       });
       const idempotency = [...this.idempotency].filter(([, entry]) => Buffer.byteLength(JSON.stringify(entry)) <= 65536).slice(-this.maxSeen);
-      writeFileSync(this.replayFile, JSON.stringify({ seen, nonces: [...this.nonces], idempotency }), { mode: 0o600 });
-      chmodSync(this.replayFile, 0o600);
+      const temp = `${this.replayFile}.tmp-${process.pid}`;
+      writeFileSync(temp, JSON.stringify({ seen, nonces: [...this.nonces], idempotency, pairings: this.pairings.snapshot() }), { mode: 0o600 });
+      chmodSync(temp, 0o600); renameSync(temp, this.replayFile); chmodSync(this.replayFile, 0o600);
     } catch { /* persistence failure never leaks credentials */ }
   }
 
@@ -123,8 +126,17 @@ export class DanContractAdapter {
     const method = envelope.method || envelope.body?.method;
     if (envelope.kind !== "request" || typeof method !== "string" || !METHODS.has(method)) throw new Error("method_not_allowed");
     const params = envelope.body?.params || envelope.body || {};
+    if (method === "pair.status" && params.pairing_id) { const pairing = this.pairings.records.get(params.pairing_id); if (!pairing || ![pairing.inviter, pairing.joiner].includes(envelope.sender)) throw new Error("forbidden"); }
+    if (!method.startsWith("pair.") && params.pairing_id) { const pairing = this.pairings.records.get(params.pairing_id); if (!pairing || pairing.status !== "connected" || pairing.joiner !== envelope.sender) throw new Error("forbidden"); const allow = pairing.permissions?.allow; const deny = pairing.permissions?.deny || []; const capability = method.startsWith("task.") ? "task.write" : method; if (!Array.isArray(allow) || (!allow.includes(capability) && !allow.includes("*")) || deny.includes(capability) || deny.includes(method)) throw new Error("forbidden"); }
     let result;
-    if (method === "ping") result = { pong: true };
+    if (method === "pair.invite.create") result = this.pairings.create({ inviter: envelope.sender, permissions: params.permissions || {}, duration: params.duration || "1h", idempotency_key: params.idempotency_key });
+    else if (method === "pair.join.request") result = this.pairings.mutate(params.pairing_id, "join", envelope.sender, { token: params.token, revision: params.revision });
+    else if (method === "pair.approve") result = this.pairings.mutate(params.pairing_id, "approve", envelope.sender, { revision: params.revision, permissions: params.permissions, duration: params.duration });
+    else if (method === "pair.reject") result = this.pairings.mutate(params.pairing_id, "reject", envelope.sender, { revision: params.revision });
+    else if (method === "pair.session.open") result = this.pairings.mutate(params.pairing_id, "connect", envelope.sender, { revision: params.revision });
+    else if (method === "pair.revoke") result = this.pairings.mutate(params.pairing_id, "revoke", envelope.sender, { revision: params.revision });
+    else if (method === "pair.status") { const pairing = this.pairings.records.get(params.pairing_id); if (!pairing) throw new Error("pairing_not_found"); result = this.pairings.view(pairing); }
+    else if (method === "ping") result = { pong: true };
     else if (method === "describe") result = { protocol: DAN_PROTOCOL, node_id: this.nodeId, instance_id: this.instanceId, capabilities: ["rpc", "tasks"], events: false, ...this.describeInfo };
     else if (method === "message.send") {
       if (strict && (typeof params.idempotency_key !== "string" || !params.idempotency_key || Buffer.byteLength(params.idempotency_key) > 128)) throw new Error("invalid_envelope");

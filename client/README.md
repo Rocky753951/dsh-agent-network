@@ -30,11 +30,11 @@ window.__DSH_AGENT_NETWORK_BRIDGE__ = {
   url: "<由宿主配置的 bridge URL>",
   protocolVersion: "<已冻结的协议版本>",
   // 每个 path 都必须由宿主/冻结契约明确提供；插件不会推断
-  endpoints: { health: "<health path>", discover: "<discover path>", message: "<message path>", submit: "<submit path>", status: "<status path>", cancel: "<cancel path>" }
+  endpoints: { health: "<health path>", discover: "<discover path>", message: "<message path>", submit: "<submit path>", status: "<status path>", cancel: "<cancel path>", "invite.create": "<invite.create path>", "join.request": "<join.request path>", approve: "<approve path>", "session.open": "<session.open path>", revoke: "<revoke path>" }
 };
 ```
 
-也可通过 `apply({ agentNetworkBridge: { url, protocolVersion, endpoints } })` 传入。面板提供 Connect/health、Discover、消息、任务提交（accepted）、status/result、cancel 及错误提示；配置 bridge 后优先走 bridge，避免静默改走 runtime。仅当 URL、协议版本和对应 endpoint path 显式配置后才发起 fetch；callback adapter 可在无 URL 时接管 transport，但仍要求协议版本。Host formal RPC 仍由**外部 adapter/宿主**负责映射与鉴权，插件不假设 REST schema；adapter 必须把 formal response 放在 `result` 时仍可由插件解包 task_id，并透传 lease/result_hash/error.code。当前目录提供 Node 配置/信封测试，不伪装成浏览器 DOM E2E；浏览器验收需在真实 DSH Web profile 中点击上述流程。
+也可通过 `apply({ agentNetworkBridge: { url, protocolVersion, endpoints } })` 传入。面板提供配对创建/复制脱敏邀请、加入申请、审批、权限 scope 与时长选择、双方确认、实时状态/剩余时间、过期与撤销，同时保留 Connect/health、Discover、消息、任务提交（accepted）、status/result、cancel 及错误提示；配置 bridge 后优先走 bridge，避免静默改走 runtime。仅当 URL、协议版本和对应 endpoint path 显式配置后才发起 fetch；callback adapter 可在无 URL 时接管 transport，但仍要求协议版本。Host formal RPC 仍由**外部 adapter/宿主**负责映射与鉴权，插件不假设 REST schema；adapter 必须把 formal response 放在 `result` 时仍可由插件解包 task_id，并透传 lease/result_hash/error.code。当前目录提供 Node 配置/信封测试，不伪装成浏览器 DOM E2E；浏览器验收需在真实 DSH Web profile 中点击上述流程。
 
 可验证：
 

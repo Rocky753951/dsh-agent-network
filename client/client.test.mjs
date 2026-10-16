@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
-import { readBridgeConfig, buildTaskPayload, unwrapTaskResult, assertNoResultError, formatBridgeError, bridgeCall } from './client.js';
+import { readBridgeConfig, buildTaskPayload, pairingPayload, normalizePairingResult, unwrapTaskResult, assertNoResultError, formatBridgeError, bridgeCall } from './client.js';
 
 assert.equal(readBridgeConfig({}).configured, false);
 assert.equal(readBridgeConfig({ agentNetworkBridge: { url: 'https://example.test', protocolVersion: 'v1', endpoints: { health: '/health' } } }).configured, true);
 assert.equal(readBridgeConfig({ agentNetworkBridge: { protocolVersion: 'v1', timeoutMs: 25, request: async () => ({}) } }).configured, true);
 assert.equal(readBridgeConfig({ agentNetworkBridge: { protocolVersion: 'v1', timeoutMs: 25, request: async () => ({}) } }).timeoutMs, 25);
 assert.deepEqual(readBridgeConfig({ agentNetworkBridge: { url: 'x', protocolVersion: 'v1', endpoints: { submit: '/submit', bad: 4 } } }).endpoints, { submit: '/submit' });
+const pairing = pairingPayload('invite.create', { scope_allowlist: ['read'], duration_seconds: 3600 });
+assert.equal(pairing.role, 'host'); assert.deepEqual(pairing.permissions, ['read']); assert.equal(pairing.duration, '1h'); assert.equal(pairing.duration_seconds, undefined);
+assert.equal(pairingPayload('join.request', { invite_code: 'masked' }).token, 'masked');
+assert.equal(normalizePairingResult({ status: 'connected', permissions: ['read'], duration: '1h' }).state, 'connected');
+assert.equal(normalizePairingResult({ duration: '1h' }).duration_seconds, 3600);
 const task = buildTaskPayload({ target: 'agent-a', text: 'do work' });
 for (const key of ['task_id', 'objective', 'input', 'idempotency_key', 'deadline', 'required_capabilities', 'write_scopes']) assert.ok(task[key] !== undefined, key);
 assert.equal(unwrapTaskResult({ ok: true, result: { task_id: 'nested-id', status: 'completed' } }).task_id, 'nested-id');

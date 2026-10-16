@@ -7,7 +7,7 @@ export const inject = ["sessions", "uiWorkspace", "slots"];
 const STYLE = `
 .dsh-agent-network-toggle{position:fixed;right:16px;bottom:16px;z-index:2147483000;border:1px solid #334155;border-radius:999px;background:#0f172a;color:#f8fafc;padding:10px 14px;font:600 13px system-ui,sans-serif;box-shadow:0 8px 24px #02061766;cursor:pointer}
 .dsh-agent-network-panel{position:fixed;right:16px;bottom:64px;z-index:2147483000;width:min(380px,calc(100vw - 32px));max-height:min(600px,calc(100vh - 96px));overflow:auto;box-sizing:border-box;border:1px solid #334155;border-radius:16px;background:#0f172af5;color:#e2e8f0;padding:16px;font:14px system-ui,sans-serif;box-shadow:0 20px 50px #02061799;backdrop-filter:blur(12px)}
-.dsh-agent-network-panel[hidden]{display:none}.dsh-agent-network-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:14px}.dsh-agent-network-head h2{font-size:16px;margin:0}.dsh-agent-network-close{border:0;background:transparent;color:#94a3b8;font-size:20px;cursor:pointer}.dsh-agent-network-list{display:grid;gap:8px;margin:0 0 14px;padding:0;list-style:none}.dsh-agent-network-agent{display:flex;align-items:center;gap:9px;border:1px solid #1e293b;border-radius:10px;padding:9px}.dsh-agent-network-dot{width:8px;height:8px;border-radius:50%;background:#64748b;flex:none}.dsh-agent-network-dot.online{background:#34d399;box-shadow:0 0 0 3px #34d39922}.dsh-agent-network-name{font-weight:600}.dsh-agent-network-status{margin-left:auto;color:#94a3b8;font-size:12px}.dsh-agent-network-form{display:grid;gap:8px}.dsh-agent-network-form label{font-size:12px;color:#94a3b8}.dsh-agent-network-form input,.dsh-agent-network-form textarea{width:100%;box-sizing:border-box;border:1px solid #334155;border-radius:8px;background:#020617;color:#f8fafc;padding:9px;font:inherit}.dsh-agent-network-form textarea{min-height:68px;resize:vertical}.dsh-agent-network-actions{display:flex;gap:8px}.dsh-agent-network-actions button{border:0;border-radius:8px;background:#38bdf8;color:#082f49;padding:9px 11px;font-weight:700;cursor:pointer}.dsh-agent-network-actions button.secondary{background:#1e293b;color:#cbd5e1}.dsh-agent-network-note{color:#94a3b8;font-size:12px;min-height:18px;margin:2px 0 0}.dsh-agent-network-result{white-space:pre-wrap;max-height:140px;overflow:auto;color:#cbd5e1;font-size:12px;margin:0}
+.dsh-agent-network-panel[hidden]{display:none}.dsh-agent-network-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:14px}.dsh-agent-network-head h2{font-size:16px;margin:0}.dsh-agent-network-close{border:0;background:transparent;color:#94a3b8;font-size:20px;cursor:pointer}.dsh-agent-network-list{display:grid;gap:8px;margin:0 0 14px;padding:0;list-style:none}.dsh-agent-network-agent{display:flex;align-items:center;gap:9px;border:1px solid #1e293b;border-radius:10px;padding:9px}.dsh-agent-network-dot{width:8px;height:8px;border-radius:50%;background:#64748b;flex:none}.dsh-agent-network-dot.online{background:#34d399;box-shadow:0 0 0 3px #34d39922}.dsh-agent-network-name{font-weight:600}.dsh-agent-network-status{margin-left:auto;color:#94a3b8;font-size:12px}.dsh-agent-network-form{display:grid;gap:8px}.dsh-agent-network-form label{font-size:12px;color:#94a3b8}.dsh-agent-network-form input,.dsh-agent-network-form textarea,.dsh-agent-network-pairing input,.dsh-agent-network-pairing select{width:100%;box-sizing:border-box;border:1px solid #334155;border-radius:8px;background:#020617;color:#f8fafc;padding:9px;font:inherit}.dsh-agent-network-form textarea{min-height:68px;resize:vertical}.dsh-agent-network-actions{display:flex;gap:8px}.dsh-agent-network-actions button{border:0;border-radius:8px;background:#38bdf8;color:#082f49;padding:9px 11px;font-weight:700;cursor:pointer}.dsh-agent-network-actions button.secondary{background:#1e293b;color:#cbd5e1}.dsh-agent-network-note{color:#94a3b8;font-size:12px;min-height:18px;margin:2px 0 0}.dsh-agent-network-result{white-space:pre-wrap;max-height:140px;overflow:auto;color:#cbd5e1;font-size:12px;margin:0}
 @media (prefers-reduced-motion:reduce){.dsh-agent-network-panel{scroll-behavior:auto}}
 `;
 
@@ -65,6 +65,33 @@ export function unwrapTaskResult(response) {
   return response?.result && typeof response.result === "object" ? response.result : response;
 }
 
+export function durationEnum(seconds) {
+  const value = Number(seconds);
+  return value === 1800 ? "30m" : value === 86400 ? "24h" : "1h";
+}
+
+export function durationSeconds(value) {
+  return value === "30m" ? 1800 : value === "24h" ? 86400 : 3600;
+}
+
+export function pairingPayload(operation, values = {}) {
+  const idempotency_key = globalThis.crypto?.randomUUID?.() ?? `pair-${Date.now()}`;
+  const permissions = values.permissions ?? values.scope_allowlist ?? [];
+  const durationSecondsValue = Number(values.duration_seconds ?? values.duration ?? 3600);
+  const duration = durationEnum(durationSecondsValue);
+  if (operation === "invite.create") return { role: "host", permissions, duration, idempotency_key };
+  if (operation === "join.request") return { role: "peer", token: values.token ?? values.invite_code ?? "", idempotency_key };
+  if (operation === "approve") return { pairing_id: values.pairing_id, permissions, duration, idempotency_key };
+  if (operation === "session.open") return { pairing_id: values.pairing_id, token: values.token ?? values.confirmation_token, idempotency_key };
+  return { pairing_id: values.pairing_id, idempotency_key };
+}
+
+export function normalizePairingResult(value = {}) {
+  const duration = value.duration_seconds ?? (typeof value.duration === "number" ? value.duration : durationSeconds(value.duration));
+  const token = value.token ?? value.invite_code ?? value.confirmation_token;
+  return { ...value, state: value.state ?? value.status ?? "unknown", status: value.status ?? value.state ?? "unknown", scope_allowlist: value.permissions ?? value.scope_allowlist ?? [], duration_seconds: duration, duration_label: typeof value.duration === "string" ? value.duration : durationEnum(duration), invite_code: value.invite_code ?? token, confirmation_token: value.confirmation_token ?? token };
+}
+
 export function assertNoResultError(result) {
   const error = result?.error;
   if (error) throw Object.assign(new Error(error.message ?? "Bridge result failed."), { code: error.code ?? error.error_code ?? "BRIDGE_RESULT_ERROR" });
@@ -119,7 +146,7 @@ function mount(ctx) {
   panel.id = "dsh-agent-network-panel";
   panel.hidden = true;
   panel.setAttribute("aria-label", "Agent network");
-  panel.innerHTML = `<div class="dsh-agent-network-head"><h2>Agent network</h2><button class="dsh-agent-network-close" type="button" aria-label="Close">×</button></div><div class="dsh-agent-network-actions"><button type="button" data-bridge="health">Connect / health</button><button type="button" class="secondary" data-bridge="discover">Discover</button></div><ul class="dsh-agent-network-list"></ul><form class="dsh-agent-network-form"><label for="dsh-agent-target">Target agent</label><input id="dsh-agent-target" name="target" placeholder="agent id or name"><label for="dsh-agent-text">Message or task</label><textarea id="dsh-agent-text" name="text" required placeholder="Describe the work…"></textarea><div class="dsh-agent-network-actions"><button type="submit" data-kind="message">Send message</button><button type="submit" class="secondary" data-kind="task">Create task</button></div><p class="dsh-agent-network-note" role="status"></p><pre class="dsh-agent-network-result" aria-live="polite"></pre><label for="dsh-agent-task-id">Task ID</label><input id="dsh-agent-task-id" name="taskId" placeholder="Returned task id"><div class="dsh-agent-network-actions"><button type="button" data-task="status" class="secondary">Refresh status/result</button><button type="button" data-task="cancel" class="secondary">Cancel task</button></div></form>`;
+  panel.innerHTML = `<div class="dsh-agent-network-head"><h2>Agent network</h2><button class="dsh-agent-network-close" type="button" aria-label="Close">×</button></div><section class="dsh-agent-network-pairing" aria-labelledby="pairing-title"><h3 id="pairing-title">Pair a user</h3><div class="dsh-agent-network-actions"><button type="button" data-pair="invite.create">Create invite</button><button type="button" data-pair="join.request" class="secondary">Join</button></div><input name="pairInvite" placeholder="Invite code" aria-label="Invite code"><input name="pairScopes" placeholder="Scopes (comma separated)" aria-label="Permission scopes"><select name="pairDuration" aria-label="Duration"><option value="1800">30 minutes</option><option value="3600" selected>1 hour</option><option value="86400">24 hours</option></select><div class="dsh-agent-network-actions"><button type="button" data-pair="approve" class="secondary">Approve</button><button type="button" data-pair="session.open" class="secondary">Confirm connection</button><button type="button" data-pair="revoke" class="secondary">Revoke</button><button type="button" data-pair="status" class="secondary">Refresh</button></div><p class="dsh-agent-network-pair-status" role="status">idle</p><p class="dsh-agent-network-pair-code"></p></section><div class="dsh-agent-network-actions"><button type="button" data-bridge="health">Connect / health</button><button type="button" class="secondary" data-bridge="discover">Discover</button></div><ul class="dsh-agent-network-list"></ul><form class="dsh-agent-network-form"><label for="dsh-agent-target">Target agent</label><input id="dsh-agent-target" name="target" placeholder="agent id or name"><label for="dsh-agent-text">Message or task</label><textarea id="dsh-agent-text" name="text" required placeholder="Describe the work…"></textarea><div class="dsh-agent-network-actions"><button type="submit" data-kind="message">Send message</button><button type="submit" class="secondary" data-kind="task">Create task</button></div><p class="dsh-agent-network-note" role="status"></p><pre class="dsh-agent-network-result" aria-live="polite"></pre><label for="dsh-agent-task-id">Task ID</label><input id="dsh-agent-task-id" name="taskId" placeholder="Returned task id"><div class="dsh-agent-network-actions"><button type="button" data-task="status" class="secondary">Refresh status/result</button><button type="button" data-task="cancel" class="secondary">Cancel task</button></div></form>`;
   document.body.append(toggle, panel);
 
   const list = panel.querySelector(".dsh-agent-network-list");
@@ -141,12 +168,19 @@ function mount(ctx) {
   }
   const setOpen = (open) => { panel.hidden = !open; toggle.setAttribute("aria-expanded", String(open)); if (open) panel.querySelector("input")?.focus(); };
   toggle.addEventListener("click", () => setOpen(panel.hidden));
-  panel.querySelector(".dsh-agent-network-close").addEventListener("click", () => setOpen(false));
+  let pairingId = ""; let pairingTimer;
+  panel.querySelector(".dsh-agent-network-close").addEventListener("click", () => { clearInterval(pairingTimer); setOpen(false); });
   const note = panel.querySelector(".dsh-agent-network-note");
   const taskId = () => panel.querySelector("[name=taskId]").value.trim();
   const resultBox = panel.querySelector(".dsh-agent-network-result");
   const requestId = () => globalThis.crypto?.randomUUID?.() ?? `dsh-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const showResult = (value) => { let text; try { text = typeof value === "string" ? value : JSON.stringify(value, null, 2); } catch { text = "[Unserializable result]"; } resultBox.textContent = text.length > 4000 ? `${text.slice(0, 4000)}…` : text; };
+  const pairStatus = panel.querySelector(".dsh-agent-network-pair-status");
+  const pairCode = panel.querySelector(".dsh-agent-network-pair-code");
+  const pairPayload = (op) => pairingPayload(op, { pairing_id: pairingId || undefined, invite_code: panel.querySelector("[name=pairInvite]").value.trim(), permissions: panel.querySelector("[name=pairScopes]").value.split(",").map((v) => v.trim()).filter(Boolean), duration: Number(panel.querySelector("[name=pairDuration]").value) });
+  const renderPair = (data) => { const value = normalizePairingResult(unwrapTaskResult(data)); assertNoResultError(value); pairingId = value?.pairing_id ?? pairingId; pairStatus.textContent = `${value?.state ?? "unknown"}${value?.remaining_seconds != null ? ` · ${Math.max(0, value.remaining_seconds)}s remaining` : value?.expires_at ? ` · expires ${value.expires_at}` : ""}`; if (value?.invite_code) { pairCode.textContent = `Invite: ${value.invite_code}`; globalThis.navigator?.clipboard?.writeText(value.invite_code).catch(() => {}); } showResult(value); return value; };
+  const refreshPair = async () => { if (!pairingId) return; try { renderPair(await bridgeCall(bridge, "status", { pairing_id: pairingId })); } catch (error) { pairStatus.textContent = formatBridgeError(error); } };
+  panel.querySelectorAll("[data-pair]").forEach((button) => button.addEventListener("click", async () => { const op = button.dataset.pair; try { const result = await bridgeCall(bridge, op, pairPayload(op)); const value = renderPair(result); if (op === "invite.create" && value?.invite_code) pairCode.textContent = `Invite: ${value.invite_code} (copied if permitted)`; if (op === "status" || op === "session.open") { clearInterval(pairingTimer); pairingTimer = setInterval(refreshPair, 10000); } } catch (error) { pairStatus.textContent = `Next step: ${formatBridgeError(error)}`; } }));
   panel.querySelectorAll("[data-bridge]").forEach((button) => button.addEventListener("click", async () => {
     try { const result = await bridgeCall(bridge, button.dataset.bridge, {}); if (button.dataset.bridge === "discover" && Array.isArray(result?.agents)) { list.replaceChildren(...result.agents.map((agent) => { const row = document.createElement("li"); row.className = "dsh-agent-network-agent"; row.textContent = `${agent.name ?? agent.id ?? "agent"} · ${agent.online ? "online" : "offline"}`; return row; })); } note.textContent = `${button.dataset.bridge} OK${result?.status ? `: ${result.status}` : ""}`; }
     catch (error) { note.textContent = `Bridge error: ${formatBridgeError(error)}`; }

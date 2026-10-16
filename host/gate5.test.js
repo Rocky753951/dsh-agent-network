@@ -56,6 +56,13 @@ test("audit logger emits metadata without sensitive payload", () => {
   assert.deepEqual(logged, { request_id: "r", method: "task.submit", status: 200 });
 });
 
+test("runtime audit log grep contains no secret, MAC, token, payload, or path", () => {
+  const lines = []; const audit = createAuditLogger({ info: (_label, record) => lines.push(JSON.stringify(record)) });
+  audit({ request_id: "r", method: "pair.invite.create", status: 200, secret: "super-secret", mac: "deadbeef", token: "invite-token", payload: "private-body", path: "/home/private/replay.json", size: 42 });
+  const output = lines.join("\\n"); for (const value of ["super-secret", "deadbeef", "invite-token", "private-body", "/home/private"]) assert.equal(output.includes(value), false);
+  assert.match(output, /pair.invite.create/); assert.match(output, /request_id/);
+});
+
 test("audit records omit sensitive payload fields", () => {
   const record = auditRecord({ request_id: "r", method: "task.submit", input: "secret", result: "payload", status: 200, size: 10 });
   assert.deepEqual(record, { request_id: "r", method: "task.submit", status: 200, size: 10 });
