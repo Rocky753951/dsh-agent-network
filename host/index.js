@@ -3,11 +3,34 @@ import { AgentNetworkServer } from "./network.js";
 export const inject = ["tools"];
 
 const output = {
-  schema: { type: "json" },
+  // `ctx.tools.register` receives raw JSON Schema, not the author-only `json` DSL.
+  schema: {},
   render: (_args, value) => [{ type: "text", text: JSON.stringify(value, null, 2) }]
 };
 
-const tool = (name, description, parameters, execute) => ({ name, description, parameters, output, execute });
+function parameterSchema(parameters) {
+  const properties = {};
+  const required = [];
+  for (const [name, spec] of Object.entries(parameters)) {
+    const { required: isRequired, type, ...annotations } = spec;
+    properties[name] = type === "json" ? annotations : { type, ...annotations };
+    if (isRequired) required.push(name);
+  }
+  return {
+    type: "object",
+    properties,
+    additionalProperties: false,
+    ...(required.length ? { required } : {})
+  };
+}
+
+const tool = (name, description, parameters, execute) => ({
+  name,
+  description,
+  parameters: parameterSchema(parameters),
+  output,
+  execute
+});
 const activeContexts = new WeakSet();
 
 /** DSH Host plugin entry point. */
