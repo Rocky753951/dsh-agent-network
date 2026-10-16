@@ -1,0 +1,19 @@
+{
+  "name": "@local/dsh-agent-network-host",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal Host-side Agent network bridge for DSH",
+  "exports": {
+    ".": "./index.js",
+    "./network.js": "./network.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

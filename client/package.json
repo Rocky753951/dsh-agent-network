@@ -1,0 +1,20 @@
+{
+  "name": "@dsh/agent-network-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "No-build DSH Agent Network UI plugin",
+  "type": "module",
+  "main": "client.js",
+  "files": ["client.js", "README.md", "package.json"],
+  "exports": {
+    ".": "./client.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": []
+    }
+  }
+}

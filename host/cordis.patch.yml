@@ -1,0 +1,6 @@
+- insert:
+    - id: dsh-agent-network-host
+      name: '@local/dsh-agent-network-host'
+      config:
+        host: 127.0.0.1
+        port: 8787

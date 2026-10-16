@@ -1,0 +1,10 @@
+{
+  "protocol": "dan/0.1",
+  "rpc_path": "/api/agent-network/v1/rpc",
+  "hmac_framing": "DAN/0.1\nPOST\n/api/agent-network/v1/rpc\n<canonical unsigned>",
+  "canonical_examples": [
+    {"input": {"b": 2, "a": 1}, "canonical": "{\"a\":1,\"b\":2}"},
+    {"input": {"z": [true, null, "x"]}, "canonical": "{\"z\":[true,null,\"x\"]}"}
+  ],
+  "security": {"loopback_only": true, "replay_state": "optional replayFile, mode 0600"}
+}

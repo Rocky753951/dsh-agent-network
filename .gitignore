@@ -1,0 +1,12 @@
+# Local runtime and replay artifacts
+host/.replay-*.json
+*.replay.json
+
+# Local secrets and environment files
+.env
+.env.*
+!.env.example
+
+# Node dependencies and logs
+node_modules/
+npm-debug.log*
