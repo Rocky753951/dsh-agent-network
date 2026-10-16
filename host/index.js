@@ -4,7 +4,8 @@ export const inject = ["tools"];
 
 const output = {
   // `ctx.tools.register` receives raw JSON Schema, not the author-only `json` DSL.
-  schema: {},
+  // Host tool results are JSON objects; keep the object open for forward-compatible fields.
+  schema: { type: "object", additionalProperties: true },
   render: (_args, value) => [{ type: "text", text: JSON.stringify(value, null, 2) }]
 };
 
@@ -13,7 +14,9 @@ function parameterSchema(parameters) {
   const required = [];
   for (const [name, spec] of Object.entries(parameters)) {
     const { required: isRequired, type, ...annotations } = spec;
-    properties[name] = type === "json" ? annotations : { type, ...annotations };
+    properties[name] = type === "json"
+      ? { type: "object", additionalProperties: true, ...annotations }
+      : { type, ...annotations };
     if (isRequired) required.push(name);
   }
   return {
