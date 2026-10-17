@@ -20,26 +20,36 @@
 3. 点击按钮检查 Agent 列表；若当前 DSH 暴露 `ctx.sessions.list.getSnapshot().byId`，会显示真实 roster，否则显示安全空状态。消息/任务发送同样按能力探测，未提供 API 时会提示并尝试复制内容。
 4. HMR 未启用时需重启 DSH web profile；启用 client HMR 时只需触发 profile/plugin reload，再刷新页面验证。
 
-## Host bridge 状态
+## 与本机 Host 的连接（零配置）
 
-当前版本不硬编码或默认接通 8787 Host bridge：client 不会猜测端口、协议路径、RPC schema 或改动 host/protocol 目录。接入通过宿主显式配置的 endpoint 或外部 request adapter 完成：
+面板默认不再需要手工注入 bridge。加载时依次尝试：
+
+1. `window.__DSH_AGENT_NETWORK_BRIDGE__` / `apply({ agentNetworkBridge })` 里显式配置的 `discoverUrl`；
+2. 否则 `window.__DSH_AGENT_NETWORK_PORT__`（缺省 8787）拼出的 `http://127.0.0.1:<port>/api/agent-network/v1/bridge-config`。
+
+Host 只对 loopback 页面返回该配置，内容为 `{ connector: { url, endpoint, token, roles }, protocol }`。拿到后 `bridgeCall` 切到 `transport: "local"`：`POST <endpoint>`，体为 `{ operation, payload }`，令牌放在 `x-agent-network-token`。发现失败时面板保持未配置状态并在状态区说明，不会静默重试到别的端口或路径。
+
+仍然支持完全手工的宿主配置（用于反向代理或自建 adapter）：
 
 ```js
-// 在加载插件前由宿主注入；两项都必须是字符串且非空
 window.__DSH_AGENT_NETWORK_BRIDGE__ = {
-  url: "<由宿主配置的 bridge URL>",
-  protocolVersion: "<已冻结的协议版本>",
-  // 每个 path 都必须由宿主/冻结契约明确提供；插件不会推断
-  endpoints: { health: "<health path>", discover: "<discover path>", message: "<message path>", submit: "<submit path>", status: "<status path>", cancel: "<cancel path>", "invite.create": "<invite.create path>", "join.request": "<join.request path>", approve: "<approve path>", "session.open": "<session.open path>", revoke: "<revoke path>" }
+  url: "<bridge URL>",                 // local 传输必填
+  protocolVersion: "dan/0.1",
+  transport: "local",                  // 缺省为 "http"
+  token: "<连接器令牌>",
+  connectorEndpoint: "/api/agent-network/v1/local",
+  endpoints: { health: "<path>", message: "<path>", /* …仅 http 传输需要 */ },
+  request: async ({ operation, payload }) => ({ /* 自定义 transport */ })
 };
 ```
 
-也可通过 `apply({ agentNetworkBridge: { url, protocolVersion, endpoints } })` 传入。面板提供配对创建/复制脱敏邀请、加入申请、审批、权限 scope 与时长选择、双方确认、实时状态/剩余时间、过期与撤销，同时保留 Connect/health、Discover、消息、任务提交（accepted）、status/result、cancel 及错误提示；配置 bridge 后优先走 bridge，避免静默改走 runtime。仅当 URL、协议版本和对应 endpoint path 显式配置后才发起 fetch；callback adapter 可在无 URL 时接管 transport，但仍要求协议版本。Host formal RPC 仍由**外部 adapter/宿主**负责映射与鉴权，插件不假设 REST schema；adapter 必须把 formal response 放在 `result` 时仍可由插件解包 task_id，并透传 lease/result_hash/error.code。当前目录提供 Node 配置/信封测试，不伪装成浏览器 DOM E2E；浏览器验收需在真实 DSH Web profile 中点击上述流程。
+面板能力：配对创建/复制邀请码、加入申请、审批、权限 scope 与时长（15m/1h/8h/24h/7d）选择、状态与倒计时、过期/撤销自动停止轮询；Connect/health、Discover、消息、任务提交、status/result、cancel 及错误提示。配对 id 与状态写 `localStorage`（键 `dsh-agent-network:pairing`），刷新或重开面板后自动恢复并继续 5 秒轮询，终态（revoked/rejected/expired）自动清理。
+
+样式使用 `--an-*` CSS 变量并跟随 `prefers-color-scheme`，浅色/深色都走宿主配色语义；面板仍是追加到 `document.body` 的独立节点，不替换 app root。
 
 可验证：
 
 ```sh
-node --input-type=module -e "import('./client.js').then(m => console.log(m.inject, typeof m.apply))"
 node -e "const p=require('./package.json'); console.log(p.dsh.client, p.exports)"
-node client.test.mjs
+node --test client.test.mjs
 ```

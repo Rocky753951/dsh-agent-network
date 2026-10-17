@@ -3,7 +3,7 @@ import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync } from "
 import { PairingState } from "./pairing.js";
 
 export const DAN_PROTOCOL = "dan/0.1";
-const METHODS = new Set(["ping", "describe", "message.send", "task.submit", "task.accept", "task.result", "task.cancel", "pair.invite.create", "pair.join.request", "pair.approve", "pair.reject", "pair.session.open", "pair.status", "pair.revoke"]);
+const METHODS = new Set(["ping", "describe", "message.send", "task.submit", "task.accept", "task.result", "task.status", "task.cancel", "pair.invite.create", "pair.join.request", "pair.approve", "pair.reject", "pair.session.open", "pair.status", "pair.revoke"]);
 const ID = /^[A-Za-z0-9._:-]{1,200}$/;
 
 export function canonical(value) {
@@ -59,6 +59,30 @@ export function validateEnvelope(envelope, { now = Date.now(), maxMessageBytes =
   return envelope;
 }
 
+/**
+ * Build the DAN envelope used by the loopback connector. It is intentionally
+ * unsigned: the connector is authenticated by a local token plus origin checks
+ * and never impersonates a remote peer. Node ids must still satisfy the DAN id
+ * grammar so the same validation path runs for connector and network traffic.
+ */
+export function buildLocalEnvelope({ sender, recipient, method, params = {}, sessionId, requestId = randomUUID(), messageId = randomUUID(), ttlMs = 30000, seq = 0 } = {}) {
+  if (typeof sender !== "string" || typeof recipient !== "string" || typeof method !== "string") throw new Error("invalid_envelope");
+  return {
+    kind: "request",
+    protocol: DAN_PROTOCOL,
+    request_id: requestId,
+    message_id: messageId,
+    session_id: sessionId || `local-${messageId}`,
+    sender,
+    recipient,
+    sent_at: new Date().toISOString(),
+    ttl_ms: ttlMs,
+    seq,
+    method,
+    body: { method, params }
+  };
+}
+
 export class DanContractAdapter {
   constructor({ nodeId = "host", instanceId = "host", hmac = {}, maxMessageBytes = 262144, describe = {}, replayFile, pairingNow = () => Date.now() } = {}) {
     this.nodeId = nodeId;
@@ -106,6 +130,16 @@ export class DanContractAdapter {
 
   dispose() { for (const task of this.tasks.values()) task.abortController?.abort(); this.tasks.clear(); this.idempotency.clear(); this.nonces.clear(); this.seen.clear(); }
 
+  #sessionFor(sender) {
+    let latest = null;
+    for (const record of this.pairings.records.values()) {
+      if (record.status !== "connected") continue;
+      if (record.inviter !== sender && record.joiner !== sender) continue;
+      if (!latest || Date.parse(record.updated_at) >= Date.parse(latest.updated_at)) latest = record;
+    }
+    return latest;
+  }
+
   async dispatch(envelope, { strict = false } = {}) {
     validateEnvelope(envelope, { maxMessageBytes: this.maxMessageBytes, requireAuth: this.requireAuth || strict, strict });
     const secret = envelope.auth?.key_id ? this.keys.get(envelope.auth.key_id) : undefined;
@@ -127,7 +161,20 @@ export class DanContractAdapter {
     if (envelope.kind !== "request" || typeof method !== "string" || !METHODS.has(method)) throw new Error("method_not_allowed");
     const params = envelope.body?.params || envelope.body || {};
     if (method === "pair.status" && params.pairing_id) { const pairing = this.pairings.records.get(params.pairing_id); if (!pairing || ![pairing.inviter, pairing.joiner].includes(envelope.sender)) throw new Error("forbidden"); }
-    if (!method.startsWith("pair.") && params.pairing_id) { const pairing = this.pairings.records.get(params.pairing_id); if (!pairing || pairing.status !== "connected" || pairing.joiner !== envelope.sender) throw new Error("forbidden"); const allow = pairing.permissions?.allow; const deny = pairing.permissions?.deny || []; const capability = method.startsWith("task.") ? "task.write" : method; if (!Array.isArray(allow) || (!allow.includes(capability) && !allow.includes("*")) || deny.includes(capability) || deny.includes(method)) throw new Error("forbidden"); }
+    if (!method.startsWith("pair.")) {
+      // A joiner that holds a live session cannot escape its scope by omitting
+      // pairing_id: the binding is resolved from the sender whenever none is sent.
+      const pairing = params.pairing_id ? this.pairings.records.get(params.pairing_id) : this.#sessionFor(envelope.sender);
+      if (params.pairing_id || pairing) {
+        if (!pairing || pairing.status !== "connected" || ![pairing.inviter, pairing.joiner].includes(envelope.sender)) throw new Error("forbidden");
+        if (pairing.joiner === envelope.sender) {
+          const allow = pairing.permissions?.allow; const deny = pairing.permissions?.deny || [];
+          // Task work is granted once as `task.write`; message scopes are per method.
+          const capability = method.startsWith("task.") ? "task.write" : method;
+          if (!Array.isArray(allow) || (!allow.includes(capability) && !allow.includes("*")) || deny.includes(capability) || deny.includes(method)) throw new Error("forbidden");
+        }
+      }
+    }
     let result;
     if (method === "pair.invite.create") result = this.pairings.create({ inviter: envelope.sender, permissions: params.permissions || {}, duration: params.duration || "1h", idempotency_key: params.idempotency_key });
     else if (method === "pair.join.request") result = this.pairings.mutate(params.pairing_id, "join", envelope.sender, { token: params.token, revision: params.revision });
@@ -155,6 +202,9 @@ export class DanContractAdapter {
       if (!params.result || typeof params.result !== "object" || Array.isArray(params.result)) throw new Error("invalid_envelope");
       const task = this.tasks.get(params.task_id); if (!task) throw new Error("task_not_found"); if (task.status !== "running") throw new Error("state_conflict"); if (Date.parse(task.lease_expires_at) <= Date.now()) throw new Error("lease_expired");
       const resultHash = createHash("sha256").update(canonical(params.result)).digest("hex"); result = { task_id: params.task_id, attempt: task.attempt, status: "succeeded", result_hash: resultHash }; this.tasks.set(params.task_id, { ...task, status: "succeeded", result: params.result });
+    } else if (method === "task.status") {
+      const task = this.tasks.get(params.task_id); if (!task) throw new Error("task_not_found");
+      result = { task_id: task.task_id, status: task.status, attempt: task.attempt, lease_id: task.lease_id, lease_expires_at: task.lease_expires_at, result_hash: task.result_hash ?? null, result: task.result ?? null };
     } else if (method === "task.cancel") { if (typeof params.idempotency_key !== "string" || !params.idempotency_key || Buffer.byteLength(params.idempotency_key) > 128) throw new Error("invalid_envelope"); const cancelScope = `${envelope.sender}:${envelope.recipient}:${method}:${params.idempotency_key}`; const cancelHash = createHash("sha256").update(canonical(params)).digest("hex"); const priorCancel = this.idempotency.get(cancelScope); if (priorCancel && priorCancel.hash !== cancelHash) throw new Error("idempotency_conflict"); if (priorCancel) { result = priorCancel.result; } else { const task = this.tasks.get(params.task_id); if (!task) throw new Error("task_not_found"); if (task.status === "cancelled") result = { task_id: params.task_id, status: "cancelled" }; else if (task.status === "succeeded" || task.status === "failed") throw new Error("state_conflict"); else { task.abortController?.abort(); task.status = "cancelled"; result = { task_id: params.task_id, status: "cancelled" }; } this.idempotency.set(cancelScope, { hash: cancelHash, result }); }
     }
      const response = { kind: "response", protocol: DAN_PROTOCOL, request_id: envelope.request_id, message_id: randomUUID(), reply_to: envelope.message_id, session_id: envelope.session_id, sender: this.nodeId, recipient: envelope.sender, sent_at: new Date().toISOString(), ttl_ms: envelope.ttl_ms, seq: 0, ok: true, result };

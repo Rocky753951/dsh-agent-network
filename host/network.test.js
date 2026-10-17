@@ -8,24 +8,44 @@ test('register, send, receive, and health work over HTTP', async (t) => {
   await server.start();
   t.after(() => server.stop());
   const base = `http://127.0.0.1:${server.address().port}`;
-  const request = (path, options) => fetch(`${base}${path}`, options).then(async (response) => ({ status: response.status, body: await response.json() }));
-  const registered = await request('/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: 'agent-test', metadata: { role: 'tester' } }) });
+  const auth = { 'content-type': 'application/json', 'x-agent-network-token': server.localToken };
+  const request = (path, options = {}) => fetch(`${base}${path}`, options).then(async (response) => ({ status: response.status, body: await response.json() }));
+  const json = (path, body) => request(path, { method: 'POST', headers: auth, body: JSON.stringify(body) });
+  const registered = await json('/register', { agentId: 'agent-test', metadata: { role: 'tester' } });
   assert.equal(registered.status, 200);
   assert.equal(registered.body.agentId, 'agent-test');
   const health = await request('/dan/0.1/health');
   assert.equal(health.body.ok, true);
   assert.equal(health.body.agents, 1);
-  const rpc = await request('/dan/0.1/rpc', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'request', protocol: 'dan/0.1', request_id: 'req-1', message_id: 'msg-1', session_id: 'sess-1', sender: 'agent-source', recipient: 'host', sent_at: new Date().toISOString(), ttl_ms: 30000, seq: 1, body: { method: 'ping' } }) });
+  const rpc = await json('/dan/0.1/rpc', { kind: 'request', protocol: 'dan/0.1', request_id: 'req-1', message_id: 'msg-1', session_id: 'sess-1', sender: 'agent-source', recipient: 'host', sent_at: new Date().toISOString(), ttl_ms: 30000, seq: 1, body: { method: 'ping' } });
   assert.equal(rpc.status, 200);
   assert.equal(rpc.body.result.pong, true);
-  const sent = await request('/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from: 'agent-source', to: 'agent-test', payload: { text: 'hello' } }) });
+  const sent = await json('/send', { from: 'agent-source', to: 'agent-test', payload: { text: 'hello' } });
   assert.equal(sent.status, 200);
   assert.equal(sent.body.payload.text, 'hello');
-  const received = await request('/receive?agentId=agent-test');
+  const received = await request('/receive?agentId=agent-test', { headers: { 'x-agent-network-token': server.localToken } });
   assert.equal(received.body.messages.length, 1);
   assert.equal(received.body.messages[0].from, 'agent-source');
-  const drained = await request('/receive?agentId=agent-test');
+  const drained = await request('/receive?agentId=agent-test', { headers: { 'x-agent-network-token': server.localToken } });
   assert.deepEqual(drained.body.messages, []);
+});
+
+test('loopback demo routes require the connector token and reject foreign origins', async (t) => {
+  const server = new AgentNetworkServer({ host: '127.0.0.1', port: 0 });
+  await server.start();
+  t.after(() => server.stop());
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const unauthenticated = await fetch(`${base}/register`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(unauthenticated.status, 401);
+  assert.equal((await unauthenticated.json()).error.code, 'unauthorized');
+  const forgedOrigin = await fetch(`${base}/send`, { method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://evil.example', 'x-agent-network-token': server.localToken }, body: '{"to":"x","payload":{}}' });
+  assert.equal(forgedOrigin.status, 403);
+  assert.equal((await forgedOrigin.json()).error.code, 'origin_not_allowed');
+  const loopbackOrigin = await fetch(`${base}/health`, { headers: { origin: 'http://127.0.0.1:33080' } });
+  assert.equal(loopbackOrigin.status, 200);
+  assert.equal(loopbackOrigin.headers.get('access-control-allow-origin'), 'http://127.0.0.1:33080');
+  const foreignCors = await fetch(`${base}/health`, { headers: { origin: 'https://evil.example' } });
+  assert.equal(foreignCors.headers.get('access-control-allow-origin'), null);
 });
 
 test('formal RPC route is exact and JSON-only', async (t) => {
@@ -99,6 +119,8 @@ test('unknown agents are rejected', async (t) => {
   const server = new AgentNetworkServer({ host: '127.0.0.1', port: 0 });
   await server.start();
   t.after(() => server.stop());
-  const response = await fetch(`http://127.0.0.1:${server.address().port}/receive?agentId=missing`);
+  const anonymous = await fetch(`http://127.0.0.1:${server.address().port}/receive?agentId=missing`);
+  assert.equal(anonymous.status, 401);
+  const response = await fetch(`http://127.0.0.1:${server.address().port}/receive?agentId=missing`, { headers: { 'x-agent-network-token': server.localToken } });
   assert.equal(response.status, 404);
 });

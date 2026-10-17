@@ -39,14 +39,16 @@ const activeContexts = new WeakSet();
 /** DSH Host plugin entry point. */
 export function apply(ctx, config = {}) {
   if (ctx && activeContexts.has(ctx)) throw new Error("agent-network: duplicate apply");
-  if (ctx && typeof ctx === "object") activeContexts.add(ctx);
   const host = config.host || "127.0.0.1";
   if (!new Set(["127.0.0.1", "localhost", "::1"]).has(host)) throw new Error("agent-network: Host plugin is loopback-only (use 127.0.0.1, localhost, or ::1)");
+  if (ctx && typeof ctx === "object") activeContexts.add(ctx);
   const server = new AgentNetworkServer({
     host,
     port: Number.isInteger(config.port) ? config.port : 8787,
     logger: ctx.logger || console,
-    contract: config.contract || {}
+    contract: config.contract || {},
+    tokenFile: typeof config.tokenFile === "string" ? config.tokenFile : "",
+    allowedOrigins: Array.isArray(config.allowedOrigins) ? config.allowedOrigins : []
   });
   const register = ctx.tools.register.bind(ctx.tools);
   const disposers = [

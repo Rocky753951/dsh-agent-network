@@ -272,3 +272,33 @@ DAN/0.1\nPOST\n/api/agent-network/v1/rpc\n<CanonicalJSON(unsigned)>
 - 只有 `temporary_unavailable`、`rate_limited`、连接中断及 408/5xx 才可自动重试；`unauthorized`、`forbidden`、参数/状态错误不可重试。重试必须复用原 `request_id`、`message_id` 和 `idempotency_key`，并受总 deadline 限制。
 
 本合同的最低验收标准是：两个独立 DSH Host 能在不依赖浏览器 Cookie、ACP 无认证或 Agent Team 内部 mailbox 的情况下，通过上述路由完成双向握手、一次幂等 `message.send`、一次 `task.submit` 及明确的成功/失败响应；任何合同字段、错误码或路由变更必须提升协议版本。
+
+### 11.6 本机连接器（Loopback Connector，不属于 DAN/0.1 远程合同）
+
+浏览器里的面板不可能自己构造 HMAC 签名的封套，也不该把签名密钥交给页面。v0 因此在同一个 loopback 服务上提供一条**只给本机页面用**的窄通道；它不是远程节点可用的接口，远程节点仍必须走 11.1 的 HMAC RPC。
+
+| 方法 | 路径 | 认证 | 用途 |
+|---|---|---|---|
+| `GET` | `/api/agent-network/v1/bridge-config` | loopback `Origin` + loopback `Host` | 返回连接器地址、令牌与角色对，供页面零配置接入 |
+| `POST` | `/api/agent-network/v1/local` | `x-agent-network-token` + loopback `Origin` + loopback `Host` | 面板以 `{operation, payload}` 调用本机 Host |
+
+边界规则（实现见 `host/network.js`）：
+
+- **来源围栏**：`Origin` 缺失或为 loopback 才放行；`Host` 头必须是 `127.0.0.1`/`localhost`/`[::1]`（可带端口），否则分别是 `origin_not_allowed`、`invalid_host`（403）。响应 `access-control-allow-origin` 只回显被允许的来源，不再有 `*`。
+- **令牌**：32 字节随机、base64url；默认仅驻留内存，配置 `tokenFile` 时以 0600 落盘并在重启后复用。比较使用定长 `timingSafeEqual`。
+- **不冒充远程身份**：连接器构造的封套不签名，也不参与远程 HMAC 校验；它只以本机身份对（`<node_id>` 作为邀请方、`<node_id>-peer` 作为加入方）执行 `pair.*` 与 `message.send`/`task.*`。
+- **操作白名单**：`health`、`describe`、`discover`、`message`、`submit`、`cancel`、`invite.create`、`join.request`、`approve`、`reject`、`session.open`、`revoke`、`status`。白名单外的操作返回 `unknown_operation`（400），不做路径或方法推断。
+- **配对归属**：`status`/`approve`/`reject`/`revoke` 会先解析调用方在该 pairing 中的角色，非成员一律 `forbidden`；`join.request` 用邀请码反查 pairing，不接受任意 pairing_id 直接加入。
+- **令牌不外泄**：`bridge-config` 只返回连接器令牌，不含 HMAC 密钥、绝对路径或审计内容；连接器令牌与 DAN 签名密钥是两套独立凭据。
+- **残余风险（已知边界）**：来源围栏挡的是远程页面与 DNS rebinding，不构成对本机进程的隔离——任何能在 loopback 源上提供页面的本地程序都能读到 `bridge-config` 里的令牌。需要更强隔离应改用 Unix socket 或一次性配对码，v0 未实现。
+
+配对权限的强制口径（`host/contract.js` dispatch）：
+
+- 请求带 `pairing_id`：该 pairing 必须存在、`connected`，且发送方是邀请方或加入方，否则 `forbidden`。
+- 请求不带 `pairing_id`：若发送方本身已处于某个 `connected` 会话中（加入方），仍按其 `permissions.allow/deny` 校验——**不能靠省略 `pairing_id` 绕过 scope**。邀请方（本机使用者）不受其客方 scope 限制。
+- 能力映射：`message.send` 按方法名授权；所有 `task.*` 统一由 `task.write` 授权。
+- `pair.approve` 不带 `permissions` 时保留邀请时的 scope，不会清空为 `[]`；时长只接受 `15m`/`1h`/`8h`/`24h`/`7d`（连接器也接受对应秒数 900/3600/28800/86400/604800，其他值 `invalid_params`）。
+
+连接器返回体统一为 DAN 响应封套 `{kind:"response", protocol:"dan/0.1", ok, result|error}`，错误码沿用 11.4，并新增 `origin_not_allowed`/`invalid_host`（403，来源或 Host 头不受信任）与 `unknown_operation`（400，连接器操作不在白名单）。
+
+浏览器预检：`OPTIONS` 在令牌校验之前直接返回 `204`，并回 `access-control-allow-methods: GET,POST,OPTIONS`、`access-control-allow-headers: content-type,x-agent-network-token,x-dsh-protocol-version`、`access-control-max-age: 600`；`/api/agent-network/v1/rpc` 保持 JSON-only，`OPTIONS` 仍是 405。`/register`、`/send`、`/receive`、`/rpc` 这些 demo 别名同样要求连接器令牌，因此**远程节点不能再使用未签名的 demo 别名**，只能走 11.1 的 HMAC RPC。

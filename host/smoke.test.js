@@ -9,8 +9,8 @@ const makeRequest = (messageId = "message-1") => ({
   ttl_ms: 30000, seq: 1, body: { method: "message.send", params: { payload: { text: "hello B" } } }
 });
 
-const post = (base, body) => fetch(`${base}/dan/0.1/rpc`, {
-  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
+const post = (base, body, token) => fetch(`${base}/dan/0.1/rpc`, {
+  method: "POST", headers: { "content-type": "application/json", "x-agent-network-token": token }, body: JSON.stringify(body)
 }).then(async (response) => ({ status: response.status, body: await response.json() }));
 
 test("demo/adapter smoke: two loopback Hosts exchange HMAC message.send and dedupe message_id", async (t) => {
@@ -24,17 +24,17 @@ test("demo/adapter smoke: two loopback Hosts exchange HMAC message.send and dedu
   request.auth = { key_id: "smoke-key" };
   request.auth.mac = signEnvelope(request, "loopback-secret");
 
-  const first = await post(baseB, request);
+  const first = await post(baseB, request, hostB.localToken);
   assert.equal(first.status, 200);
   assert.equal(first.body.ok, true);
   assert.equal(first.body.result.accepted, true);
-  const duplicate = await post(baseB, request);
+  const duplicate = await post(baseB, request, hostB.localToken);
   assert.equal(duplicate.status, 200);
   assert.deepEqual(duplicate.body, first.body);
 
   const wrongKey = makeRequest("message-2");
   wrongKey.auth = { key_id: "smoke-key", mac: signEnvelope(wrongKey, "wrong-secret") };
-  const rejected = await post(baseB, wrongKey);
+  const rejected = await post(baseB, wrongKey, hostB.localToken);
   assert.equal(rejected.status, 400);
   assert.equal(rejected.body.body.error.code, "unauthorized");
 });

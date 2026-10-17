@@ -27,11 +27,13 @@ export class PairingState {
     if (revision !== undefined && revision !== r.revision) throw new Error("revision_conflict");
     if (r.status === "invited" || r.status === "pending" || r.status === "approved" || r.status === "connected") if (this.now() >= Date.parse(r.expires_at)) { r.status = "expired"; r.revision++; this.#audit(r, "expired", actor); }
     if (action === "join" && (typeof token !== "string" || !r.token_hash || hash(token) !== r.token_hash)) throw new Error("unauthorized");
-    if (action === "join") { r.token_hash = null; r.joiner = actor; }
     if (["approve", "reject", "revoke"].includes(action) && actor !== r.inviter) throw new Error("forbidden");
     if (action === "connect" && actor !== r.joiner) throw new Error("forbidden");
     const previous = r.status;
+    // Resolve the transition before mutating: a join against an expired or
+    // revoked pairing must not consume the invite or record an actor.
     const next = Object.entries(TRANSITIONS[r.status] || {}).find(([, a]) => a === action)?.[0]; if (!next) throw new Error("state_conflict");
+    if (action === "join") { r.token_hash = null; r.token = null; r.joiner = actor; }
     if (action === "approve" && permissions) r.permissions = permissions;
     if (action === "approve" && duration) { if (!DURATIONS.has(duration)) throw new Error("invalid_envelope"); r.duration = duration; r.expires_at = new Date(this.now() + durationMs[duration]).toISOString(); }
     r.status = next; r.revision++; r.updated_at = new Date(this.now()).toISOString(); this.#audit(r, action, actor, this.now(), previous, next); this.persist(); return this.view(r);

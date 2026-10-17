@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-agent-network-host",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "DAN/0.1 agent-network Host bundle with explicit Web client bridge",
   "type": "module",
   "private": false,
@@ -18,7 +18,7 @@
     "PROTOCOL.md"
   ],
   "scripts": {
-    "test": "npm --prefix host test && npm --prefix client test"
+    "test": "node --test host/*.test.js client/*.test.mjs"
   },
   "dsh": {
     "bundle": {
